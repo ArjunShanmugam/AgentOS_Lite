@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-06-27T11:59:18.186996",
+  "total_tasks": 5,
+  "successful_tasks": 5,
+  "failed_tasks": 0,
+  "completion_rate": 1.0,
+  "total_interventions": 3,
+  "mean_recovery_time_seconds": 1.4336520000000001,
+  "tasks": [
+    {
+      "task_id": "0faffee8-19bd-4554-b0a9-b2d49bb8ada0",
+      "status": "COMPLETE",
+      "attempts": 1,
+      "interventions": [],
+      "result_strategy": "html_scraping"
+    },
+    {
+      "task_id": "f831cfb8-f637-4a67-bd03-a20e693802f7",
+      "status": "COMPLETE",
+      "attempts": 2,
+      "interventions": [
+        {
+          "attempt": 2,
+          "strategy_before": "cached_response",
+          "strategy_after": "api_fallback",
+          "failure_type": "timeout",
+          "rca_confidence": 0.85,
+          "action": "Rule-based fallback: selected api_fallback (first untried strate"
+        }
+      ],
+      "result_strategy": "api_fallback"
+    },
+    {
+      "task_id": "e4653028-2e68-4934-a5c7-cb50a745bdc1",
+      "status": "COMPLETE",
+      "attempts": 2,
+      "interventions": [
+        {
+          "attempt": 2,
+          "strategy_before": "api_fallback",
+          "strategy_after": "api_fallback",
+          "failure_type": "timeout",
+          "rca_confidence": 0.85,
+          "action": "Rule-based fallback: selected api_fallback (first untried strate"
+        }
+      ],
+      "result_strategy": "api_fallback"
+    },
+    {
+      "task_id": "8248ea63-d492-44f8-bd55-026d629d03fc",
+      "status": "COMPLETE",
+      "attempts": 2,
+      "interventions": [
+        {
+          "attempt": 2,
+          "strategy_before": "html_scraping",
+          "strategy_after": "cached_response",
+          "failure_type": "network_error",
+          "rca_confidence": 0.85,
+          "action": "Rule-based fallback: selected cached_response (first untried str"
+        }
+      ],
+      "result_strategy": "cached_response"
+    },
+    {
+      "task_id": "fb372e02-fc14-47b8-a399-b2687fbcb979",
+      "status": "COMPLETE",
+      "attempts": 1,
+      "interventions": [],
+      "result_strategy": "html_scraping"
+    }
+  ]
+}

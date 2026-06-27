@@ -1,0 +1,3 @@
+agent_id: executor-01
+schema_version: 1
+strategy: api_fallback

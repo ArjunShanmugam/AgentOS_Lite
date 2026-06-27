@@ -1,0 +1,38 @@
+[
+  {
+    "task_type": "web_scrape",
+    "target": "https://news.ycombinator.com",
+    "max_items": 10,
+    "description": "Task A: Direct success. html_scraping fetches HN homepage → COMPLETE.",
+    "expected_path": "html_scraping → COMPLETE"
+  },
+  {
+    "task_type": "web_scrape",
+    "target": "https://httpbin.org/status/429",
+    "max_items": 5,
+    "rss_feed_url": "https://news.ycombinator.com/rss",
+    "description": "Task B: Rate-limit recovery. html_scraping hits HTTP 429 → rss_fallback uses explicit rss_feed_url → COMPLETE.",
+    "expected_path": "html_scraping → rate_limit → rss_fallback → COMPLETE"
+  },
+  {
+    "task_type": "web_scrape",
+    "target": "https://httpbin.org/json",
+    "max_items": 5,
+    "description": "Task C: Parse-error recovery. html_scraping fetches JSON content (no HTML headings/links) → empty_response → api_fallback hits jsonplaceholder → COMPLETE.",
+    "expected_path": "html_scraping → empty_response → api_fallback → COMPLETE"
+  },
+  {
+    "task_type": "web_scrape",
+    "target": "https://thisdomaindoesnotexist.agentos.invalid",
+    "max_items": 5,
+    "description": "Task D: Network-error recovery. html_scraping hits ConnectError on invalid domain → network_error → cached_response reads pre-seeded Redis cache → COMPLETE.",
+    "expected_path": "html_scraping → network_error → cached_response → COMPLETE"
+  },
+  {
+    "task_type": "web_scrape",
+    "target": "https://example.com",
+    "max_items": 5,
+    "description": "Task E: Direct success on a different domain. html_scraping fetches example.com → COMPLETE.",
+    "expected_path": "html_scraping → COMPLETE"
+  }
+]

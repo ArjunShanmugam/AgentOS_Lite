@@ -98,7 +98,7 @@ The system's benchmark evaluation (20–30 tasks across four categories, with se
 **Security**
 - No task executes without passing schema validation
 - Supervisor may only select strategies from a predefined, versioned enum
-- Code executed by the Executor runs inside an isolated E2B sandbox
+- Executor performs web scraping, RSS parsing, API retrieval, and cache retrieval directly through approved tool bindings. No arbitrary user code execution is supported in v1.
 
 **Maintainability**
 - Each agent must be independently restartable without affecting others
@@ -136,7 +136,7 @@ The system is intentionally flat. There is no dynamic agent spawning, no complex
             ▼                               ▼
 ┌───────────────────┐            ┌──────────────────────┐
 │   Supervisor LLM  │◄──────────►│   Streamlit UI       │
-│  (Claude Sonnet)  │  config    │  Timeline · Metrics  │
+│(Gemini 2.5 Flash) │  config    │  Timeline · Metrics  │
 └─────┬──────┬──────┘  rewrite  └──────────────────────┘
       │      │
   spawn    receive
@@ -186,8 +186,7 @@ The system is intentionally flat. There is no dynamic agent spawning, no complex
 
 | Service | Purpose | Failure Impact |
 |---------|---------|----------------|
-| Anthropic Claude API | Supervisor LLM reasoning and RCA generation | Critical — Supervisor cannot function without it; system falls back to rule-based strategy selection |
-| E2B Sandbox API | Isolated code execution environment for Executor | High — code tasks fail; web tasks unaffected |
+| Google AI Studio API (Gemini 2.5 Flash) | Supervisor LLM reasoning and RCA generation | Critical — Supervisor cannot function without it; system falls back to rule-based strategy selection |
 | Target web sources | HTML scraping targets | Low — triggers recovery to RSS or API fallback |
 | RSS feeds | Fallback data source for scraping tasks | Medium — triggers recovery to API fallback |
 | Public REST APIs | Final fallback data source | Medium — task fails permanently if all three strategies exhausted |
@@ -199,12 +198,10 @@ The system is intentionally flat. There is no dynamic agent spawning, no complex
        │
   [FastAPI boundary] ← API key validation here
        │
-  [Internal agents] ← No external network access except E2B sandbox
-       │
-  [E2B sandbox] ← Fully isolated; no access to host filesystem or agent state
+  [Internal agents] ← No external network access; all retrieval via approved tool bindings
 ```
 
-No agent has direct internet access except through explicitly configured tool bindings. The Executor's network calls are proxied through E2B's sandboxed runtime, which prevents host compromise even if the executed code is malicious.
+No agent has direct internet access except through explicitly configured tool bindings. The Executor may only perform approved retrieval operations (web scraping, RSS parsing, API calls, cache retrieval) defined in `StrategyEnum`. No arbitrary code execution is supported in v1.
 
 ---
 
@@ -347,11 +344,11 @@ recovery_map:
 | HTTP 429 | Emit ERROR log with error_type=rate_limit; do not retry |
 | Request timeout (>10s) | Emit ERROR log with error_type=timeout |
 | Parse failure | Emit ERROR log with error_type=parse_error |
-| E2B sandbox unavailable | Emit ERROR log; code execution tasks fail; web tasks unaffected |
+| Tool binding failure | Emit ERROR log with relevant error_type; Monitor generates RCA; Supervisor selects alternative retrieval strategy per recovery_map |
 
 **Security Considerations:**
-- All code execution happens inside E2B sandbox — host filesystem is not accessible
-- No secrets or environment variables are passed into the sandbox
+- Executor performs only approved retrieval operations through tool bindings defined in StrategyEnum; no arbitrary code execution is supported in v1
+- No secrets or credentials are passed to external web sources beyond necessary HTTP headers
 - Strategy selection is controlled by the Supervisor; the Executor never selects its own strategy
 
 ---
@@ -634,15 +631,15 @@ All errors follow RFC 7807 (Problem Details):
 
 **Entry Points:**
 - FastAPI HTTP endpoints (public-facing)
-- E2B sandbox (execution environment)
 - Redis Pub/Sub (internal only)
 - Filesystem config store (local only)
+- External web sources (via approved tool bindings only)
 
 **Trust Boundaries:**
 
 ```
-[Internet] ──► [FastAPI] ──► [Internal agents] ──► [E2B sandbox]
- Untrusted      Validated      Semi-trusted           Isolated
+[Internet] ──► [FastAPI] ──► [Internal agents] ──► [Tool adapters]
+ Untrusted      Validated      Semi-trusted         StrategyEnum-constrained
 
 [LLM API] ──► [Supervisor] ──► [Config validator] ──► [Filesystem]
  External       Trusted          Must validate          Protected
@@ -653,7 +650,7 @@ All errors follow RFC 7807 (Problem Details):
 | Threat | Likelihood | Impact | Mitigation |
 |--------|-----------|--------|------------|
 | Prompt injection via task payload | Medium | High | Task payload never inserted into LLM prompt verbatim; structured extraction only |
-| Malicious code execution via Executor | Low | Critical | E2B sandbox isolation; no host access |
+| Executor performing unauthorised actions | Low | High | Executor constrained to StrategyEnum; no arbitrary code execution in v1 |
 | Config tampering to redirect Executor | Low | High | Config schema validation on every read; atomic writes |
 | API key leakage | Medium | High | Keys in environment variables; never logged |
 | LLM hallucinating invalid strategies | Medium | Medium | Output validated against StrategyEnum; invalid values rejected |
@@ -674,7 +671,7 @@ All errors follow RFC 7807 (Problem Details):
 
 - Task payloads stored in the database; no PII should be included in demo tasks
 - Structured logs redact any field matching common PII patterns (email, phone, credit card) before writing
-- E2B sandbox receives no secrets or credentials
+- No secrets or credentials are passed to external retrieval targets beyond necessary HTTP headers
 
 ### 8.5 LLM Output Validation
 
@@ -704,10 +701,10 @@ Only after passing all four checks is the strategy applied. This makes the LLM a
 | Executor: HTTP 429 | Monitor detects error_type=rate_limit in log | Supervisor switches to rss_fallback or api_fallback |
 | Executor: timeout | Monitor detects latency > 10s threshold | Supervisor switches to api_fallback or cached_response |
 | Executor: parse failure | Monitor detects error_type=parse_error | Supervisor switches to rss_fallback |
+| Tool binding failure | Monitor detects exception in retrieval tool | Monitor generates RCA; Supervisor selects alternative retrieval strategy according to recovery_map |
 | LLM API unavailable | Supervisor catches API exception | Rule-based strategy selection from recovery_map |
 | Redis unavailable | FastAPI catches connection error | Tasks buffered in DB; Monitor buffers RCA in memory |
 | Database unavailable | All agents detect DB error | Halt task; emit alert; do not attempt recovery without state |
-| E2B sandbox timeout | Executor detects timeout on sandbox call | Emit error; Monitor triggers Supervisor recovery |
 
 ### 9.2 Retry Strategy
 
@@ -746,7 +743,6 @@ When the circuit is OPEN, the Supervisor falls back to rule-based strategy selec
 | Component Unavailable | Degraded Behaviour |
 |-----------------------|--------------------|
 | LLM API | Rule-based recovery; reduced RCA quality; system continues |
-| E2B sandbox | Code tasks fail; web/API tasks unaffected |
 | Prometheus | Metrics unavailable; task processing continues |
 | Grafana | Dashboard unavailable; system continues |
 | Redis | Inter-agent communication degrades; Supervisor polls DB |
@@ -781,8 +777,7 @@ This is appropriate for a demo and benchmark evaluation environment.
 |-----------|-----------|-----------------|
 | Single Executor instance | >5 concurrent tasks | Multiple Executor instances with task queue |
 | SQLite write lock | >10 writes/second | PostgreSQL with connection pooling |
-| LLM API rate limits | >60 RPM (Anthropic tier 1) | Request batching; tier upgrade |
-| E2B sandbox cold start | ~2s per task | Warm sandbox pool |
+| LLM API rate limits | >60 RPM (Google AI Studio free tier) | Request batching; tier upgrade |
 
 ### 10.3 Horizontal Scaling Path (v2)
 
@@ -891,7 +886,7 @@ These rules must always be true. Any code change that could violate them require
 | INV-02 | The Supervisor never selects a strategy that is not in `StrategyEnum` |
 | INV-03 | The Supervisor never selects a strategy that is not valid for the detected failure type per `recovery_map` |
 | INV-04 | LLM output is never written to the filesystem or database without passing Pydantic schema validation |
-| INV-05 | No code executes outside an E2B sandbox during Executor task processing |
+| INV-05 | Executor may only execute approved retrieval strategies defined in StrategyEnum and may not perform arbitrary code execution |
 | INV-06 | InterventionRecord rows are never updated or deleted; only inserted |
 | INV-07 | A config YAML file is never written without a corresponding AgentConfigVersion row in the database |
 | INV-08 | A task cannot transition from COMPLETE or FAILED_PERMANENT back to RUNNING |
@@ -996,11 +991,11 @@ The benchmark harness is the primary quality gate. A deployment that degrades ta
 | Layer | Technology | Justification |
 |-------|-----------|---------------|
 | Orchestration | LangGraph | Stateful agent graph with explicit node transitions; better debuggability than CrewAI's implicit task routing |
-| Supervisor LLM | Claude 3.5 Sonnet (Anthropic API) | Strong structured JSON output; reliable instruction-following; fallback to rule-based when unavailable |
+| Supervisor LLM | Gemini 2.5 Flash (Google AI Studio API) | Lower operating cost; fast structured JSON generation; excellent response latency; generous developer-tier usage; well suited for classification and bounded decision-making tasks |
 | Event bus | Redis Pub/Sub | Low-latency inter-agent messaging; also provides caching layer; single dependency |
 | Database (dev) | SQLite | Zero-configuration; sufficient for single-node; easy to inspect with standard tools |
 | Database (prod) | PostgreSQL | ACID guarantees; connection pooling; JSON column support for structured payloads |
-| Code execution | E2B Sandbox | Managed isolation; no Docker-in-Docker complexity; free tier sufficient for demo |
+| Task execution layer | Native Python Tool Adapters | Simpler implementation, fewer dependencies, sufficient for web retrieval workflows in v1. Executor strategies implemented as pure Python modules using httpx, BeautifulSoup, and feedparser |
 | Structured logging | structlog | JSON output natively; context binding per agent; performance overhead negligible |
 | Metrics | Prometheus | Industry standard; native Grafana integration; pull model simplifies agent implementation |
 | Dashboards | Grafana | First-class Prometheus integration; pre-built panel types; free and open source |
@@ -1105,6 +1100,7 @@ SQLite removes all database infrastructure overhead in development. The schema i
 | OpenTelemetry tracing | Full distributed tracing valuable at scale; overkill for single-node | v2 |
 | Kubernetes deployment | Operational overhead unjustified for college-scope | v3 |
 | Multiple simultaneous Executors | Requires task queue and result aggregation; v1 is single-task | v2 |
+| E2B sandbox-based task execution | Isolated execution environment for code-execution tasks; adds API key management and integration overhead not required for v1 web retrieval workflows | v2 |
 
 ### 16.2 Scaling Roadmap
 
@@ -1113,6 +1109,7 @@ SQLite removes all database infrastructure overhead in development. The schema i
 - Multiple Executor instances with Redis task queue (FIFO)
 - PostgreSQL as default storage
 - OpenTelemetry tracing with Jaeger
+- **E2B sandbox-based task execution:** Integrate E2B as an isolated execution environment for Python code-execution tasks. Provides stronger security boundaries and support for workflows beyond web retrieval. Deferred from v1 because current functionality only requires the four web retrieval strategies (`html_scraping`, `rss_fallback`, `api_fallback`, `cached_response`).
 
 **v3 (Productionisation, 3–6 months):**
 - Kubernetes deployment with Helm charts
